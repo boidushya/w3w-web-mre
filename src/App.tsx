@@ -79,7 +79,7 @@ function App() {
       const w3w = await Web3Wallet.init({
         core, // <- pass the shared `core` instance
         metadata: {
-          name: "Demo app",
+          name: "W3W Demo",
           description: "Demo Client as Wallet/Peer",
           url: "www.walletconnect.com",
           icons: [],
