@@ -55,6 +55,23 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+dialog {
+  background: #242424;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  padding: 1.25rem 1rem;
+}
+
+dialog::backdrop {
+  position: fixed;
+  top: 0px;
+  right: 0px;
+  bottom: 0px;
+  left: 0px;
+  background-color: black;
+  opacity: 0.75;
+}
+
 #root {
   display: flex;
   flex-direction: column;
@@ -76,6 +93,37 @@ button:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 1em;
+}
+
+.my-1 {
+  margin: 1rem 0;
+}
+
+dialog > h3 {
+  font-size: 1.25rem;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0;
+}
+
+dialog > h3 > span {
+  color: white;
+  font-family: monospace;
+}
+
+dialog > code {
+  display: block;
+  font-family: monospace;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  margin: 1.25rem 0;
+}
+
+dialog .btn-container {
+  display: flex;
+  align-items: center;
   gap: 1em;
 }
 

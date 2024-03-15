@@ -1,22 +1,72 @@
 import { Core } from "@walletconnect/core";
-import { Web3Wallet, type Web3WalletTypes } from "@walletconnect/web3wallet";
+import {
+  Web3Wallet,
+  type Web3WalletTypes,
+  type IWeb3Wallet,
+} from "@walletconnect/web3wallet";
 import { buildApprovedNamespaces, getSdkError } from "@walletconnect/utils";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
+import {
+  createWalletClient,
+  hexToString,
+  http,
+  type PrivateKeyAccount,
+  type WalletClient,
+} from "viem";
+import { mainnet } from "viem/chains";
+import type { SessionTypes } from "@walletconnect/types";
 
 function App() {
-  // biome-ignore lint/suspicious/noExplicitAny: This is a demo app
-  const [web3wallet, setWeb3Wallet] = useState<any>();
+  const [web3wallet, setWeb3Wallet] = useState<IWeb3Wallet>();
+  const [wallet, setWallet] = useState<WalletClient>();
+  const [account, setAccount] = useState<PrivateKeyAccount>();
+
   const [uri, setUri] = useState<string>();
   const [address, setAddress] = useState<string>();
-  const [session, setSession] = useState<Web3WalletTypes.SessionRequest>();
+  const [session, setSession] = useState<SessionTypes.Struct>();
+
   const [isConnected, setIsConnected] = useState<boolean>(false);
+  const [requestContent, setRequestContent] = useState({
+    method: "",
+    message: "",
+    topic: "",
+    response: {},
+  });
+
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  const chain = mainnet;
 
   const generateAccount = () => {
     const privateKey = generatePrivateKey();
     const account = privateKeyToAccount(privateKey);
+    setAccount(account);
+
+    const client = createWalletClient({
+      chain,
+      transport: http(),
+    });
+
+    setWallet(client);
 
     setAddress(account.address);
+  };
+
+  const init = async () => {
+    const core = new Core({
+      projectId: import.meta.env.VITE_PROJECT_ID,
+    });
+    const w3w = await Web3Wallet.init({
+      core,
+      metadata: {
+        name: "W3W Demo",
+        description: "Demo Client as Wallet/Peer",
+        url: "www.walletconnect.com",
+        icons: [],
+      },
+    });
+    setWeb3Wallet(w3w);
   };
 
   const onSessionProposal = useCallback(
@@ -29,10 +79,10 @@ function App() {
           proposal: params,
           supportedNamespaces: {
             eip155: {
-              chains: ["eip155:1"],
+              chains: [`eip155:${chain.id}`],
               methods: ["eth_sendTransaction", "personal_sign"],
               events: ["accountsChanged", "chainChanged"],
-              accounts: [`eip155:1:${address}`],
+              accounts: [`eip155:${chain.id}:${address}`],
             },
           },
         };
@@ -41,27 +91,86 @@ function App() {
 
         const approvedNamespaces = buildApprovedNamespaces(namespaces);
 
-        const session = await web3wallet.approveSession({
+        const session = await web3wallet?.approveSession({
           id,
           namespaces: approvedNamespaces,
         });
 
         setSession(session);
       } catch (error) {
-        await web3wallet.rejectSession({
+        await web3wallet?.rejectSession({
           id,
           reason: getSdkError("USER_REJECTED"),
         });
       }
     },
-    [address, web3wallet]
+    [address, chain, web3wallet]
+  );
+
+  const onAcceptSessionRequest = async () => {
+    const { topic, response } = requestContent;
+    await web3wallet?.respondSessionRequest({
+      topic,
+      response: response as {
+        id: number;
+        jsonrpc: string;
+        result: `0x${string}`;
+      },
+    });
+    dialogRef.current?.close();
+  };
+
+  const onRejectSessionRequest = async () => {
+    const { topic, response } = requestContent;
+    const { id } = response as { id: number };
+    await web3wallet?.respondSessionRequest({
+      topic,
+      response: {
+        id,
+        jsonrpc: "2.0",
+        error: {
+          code: 5000,
+          message: "User rejected.",
+        },
+      },
+    });
+    dialogRef.current?.close();
+  };
+
+  const onSessionRequest = useCallback(
+    async (event: Web3WalletTypes.SessionRequest) => {
+      const { topic, params, id } = event;
+      const { request } = params;
+      const requestParamsMessage = request.params[0];
+
+      const message = hexToString(requestParamsMessage);
+
+      const signedMessage = await wallet?.signMessage({
+        account: account as PrivateKeyAccount,
+        message,
+      });
+
+      setRequestContent({
+        message,
+        method: request.method,
+        topic,
+        response: {
+          id,
+          jsonrpc: "2.0",
+          result: signedMessage,
+        },
+      });
+
+      dialogRef.current?.showModal();
+    },
+    [account, wallet]
   );
 
   const pair = async () => {
     if (uri) {
       try {
         console.log("pairing with uri", uri);
-        await web3wallet.pair({ uri });
+        await web3wallet?.pair({ uri });
         setIsConnected(true);
       } catch (e) {
         console.error("Error pairing with uri", e);
@@ -71,39 +180,24 @@ function App() {
 
   useEffect(() => {
     generateAccount();
-
-    const init = async () => {
-      const core = new Core({
-        projectId: import.meta.env.VITE_PROJECT_ID,
-      });
-      const w3w = await Web3Wallet.init({
-        core, // <- pass the shared `core` instance
-        metadata: {
-          name: "W3W Demo",
-          description: "Demo Client as Wallet/Peer",
-          url: "www.walletconnect.com",
-          icons: [],
-        },
-      });
-      setWeb3Wallet(w3w);
-    };
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     if (web3wallet) {
       web3wallet.on("session_proposal", onSessionProposal);
+      web3wallet.on("session_request", onSessionRequest);
+
       const activeSessions = web3wallet?.getActiveSessions();
-      console.log(activeSessions);
+
       if (activeSessions) {
-        const currentSession = Object.values(
-          activeSessions
-        )[0] as Web3WalletTypes.SessionRequest;
+        const currentSession = Object.values(activeSessions)[0];
         setSession(currentSession);
         setIsConnected(Object.keys(activeSessions).length > 0);
       }
     }
-  }, [onSessionProposal, web3wallet]);
+  }, [onSessionProposal, onSessionRequest, web3wallet]);
 
   return (
     <>
@@ -120,6 +214,7 @@ function App() {
         </button>
       </div>
       <a
+        className="my-1"
         href="https://react-app.walletconnect.com/"
         target="_blank"
         rel="noreferrer noopener"
@@ -127,21 +222,36 @@ function App() {
         Use this to test
       </a>
       {isConnected && (
-        <div>
-          <p>Connected</p>
-          <button
-            type="button"
-            onClick={() =>
-              web3wallet?.disconnectSession({
-                topic: session?.topic,
-                reason: "User disconnected",
-              })
-            }
-          >
-            Kill Session
+        <button
+          type="button"
+          onClick={() => {
+            web3wallet?.disconnectSession({
+              topic: session?.topic as string,
+              reason: {
+                code: 5000,
+                message: "User disconnected",
+              },
+            });
+            setIsConnected(false);
+          }}
+        >
+          Disconnect Session
+        </button>
+      )}
+      <dialog ref={dialogRef}>
+        <h3>
+          New approval for <span>{requestContent.method}</span>
+        </h3>
+        <code>{requestContent.message}</code>
+        <div className="btn-container">
+          <button type="button" onClick={onAcceptSessionRequest}>
+            Accept
+          </button>
+          <button type="button" onClick={onRejectSessionRequest}>
+            Reject
           </button>
         </div>
-      )}
+      </dialog>
     </>
   );
 }
